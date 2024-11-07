@@ -72,6 +72,7 @@ class UnslothModelHandler(BaseModelHandler):
         return model, tokenizer
     
     def get_optimizer_scheduler_max_steps(self, model, steps_per_epoch) -> Tuple[Optimizer, LRScheduler, int]:
+        # TODO: modify the DPO masking implementation to exclude the <eos> token as recommended by DPO paper?
         if self.max_steps == -1:
             max_steps = self.epochs * steps_per_epoch
         else:
@@ -79,7 +80,12 @@ class UnslothModelHandler(BaseModelHandler):
         warmup = self.warmup
         optimizer = self.optimizer_partial(model.parameters())
         if self.scheduler_str == "lambda":
-            scheduler = LambdaLR(optimizer, lambda step: step/warmup if warmup > step else 1 - (step-warmup)/ (max_steps-warmup))
+            if max_steps == 0:
+                scheduler = LambdaLR(optimizer, lambda step: 1) # because no steps will be taken, we just return constant.
+            elif warmup == 0:
+                scheduler = LambdaLR(optimizer, lambda step: 1 - (step / max_steps))
+            else:
+                scheduler = LambdaLR(optimizer, lambda step: step/warmup if warmup >= step else 1 - (step-warmup) / (max_steps-warmup))
         else:
             raise Exception(f"scheduler {self.scheduler_str} is not implemented yet in model.py")
         return optimizer, scheduler, max_steps

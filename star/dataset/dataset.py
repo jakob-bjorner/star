@@ -57,7 +57,7 @@ def get_train_val_test_dataset(dataset_name: str):
 
 # dl = DataLoader(train_dataset, batch_size=batch_size, collate_fn=get_generation_collate_fn(tokenizer), num_workers=num_workers, pin_memory=True, pin_memory_device="cuda") # type: ignore
 
-def get_generation_collate_fn(tokenizer):
+def get_generation_collate_fn(tokenizer, system_message, preamble_to_question):
     def generation_collate_fn(examples):
         # print(examples)
         indices = []
@@ -66,9 +66,9 @@ def get_generation_collate_fn(tokenizer):
         input_strs = []
         for example in examples:
             indices.append(example["index"])
-            formated_question = QUERY_TEMPLATE_MULTICHOICE.format(**example)
+            formated_question = QUERY_TEMPLATE_MULTICHOICE.format(Preamble_To_Question=preamble_to_question, **example)
             conversation = {
-                "system_message": "You are a helpful assistant",
+                "system_message": system_message, # "You are a helpful assistant",
                 # "system_message": "Cutting Knowledge Date: December 2023\nToday Date: 26 July 2024\n\nYou are a helpful assistant",
                 # "system_message": "Cutting Knowledge Date: December 2023\nToday Date: 23 July 2024\n\nYou are a helpful assistant",
                 "user_message": formated_question}
@@ -145,3 +145,104 @@ def get_reinforce_collate_fn(tokenizer):
     return reinforce_collate_fn
 # reinforce_dataset = RationalDataset(raw_responses, scores, prompted_questions)
 # dl_reinforce = DataLoader(reinforce_dataset, batch_size=8, collate_fn=reinforce_collate_fn, num_workers=0, pin_memory=True, pin_memory_device="cuda")
+
+
+from collections import defaultdict
+from star.utils.utils import GeneratedSamples
+class DPODataset(Dataset):
+    internal_data: list # list of tuples, giving the prompted qeustions, the answers, the raw responses, and the indices
+    def __init__(self, subjects, indices, prompted_questions, answers, raw_responses, scores):
+        # we now assume that everything is given to us flat, so we have to accumulate things by their index to process it the way we have below.
+        aggrigating_samples_by_index = defaultdict(lambda: GeneratedSamples([],[],[],[],[],[],[]))
+        for subject, index, prompted_question, answer, raw_response, score in zip(subjects, indices, prompted_questions, answers, raw_responses, scores):
+            aggrigating_samples_by_index[index] += GeneratedSamples([index],[prompted_question],[answer],[subject],['No Answer needed'],[raw_response],[score])
+        # filter to only the ones where the scores don't agree on some examples. 
+        samples_by_index = list(aggrigating_samples_by_index.values())
+
+        self.internal_data = []
+        for i, scores_for_one_question in enumerate([sample_by_index.scores for sample_by_index in samples_by_index]):
+            if 0 < sum(scores_for_one_question) < len(scores_for_one_question):
+                # mark this as contrastive examples.
+                for correct_index in [j for j, s in enumerate(scores_for_one_question) if s == 1.0]:
+                    for incorrect_index in [j for j, s in enumerate(scores_for_one_question) if s == 0.0]:
+                        if samples_by_index[i].raw_responses[correct_index] is None:
+                            continue
+                        if samples_by_index[i].raw_responses[incorrect_index] is None:
+                            continue
+                        self.internal_data.append(
+                            (samples_by_index[i].indices[0], samples_by_index[i].subjects[0], samples_by_index[i].prompted_questions[0], 
+                             (samples_by_index[i].model_answers[correct_index], samples_by_index[i].scores[correct_index], samples_by_index[i].raw_responses[correct_index]), 
+                             (samples_by_index[i].model_answers[incorrect_index], samples_by_index[i].scores[incorrect_index], samples_by_index[i].raw_responses[incorrect_index])
+                            )
+                        )
+
+    def __len__(self):
+        return len(self.internal_data)
+    def __getitem__(self, idx):
+        return self.internal_data[idx]
+
+@dataclass
+class DPOCollateReturn:
+    indices: List[int]
+    input_ids: torch.Tensor
+    attention_mask: torch.Tensor
+    labels: torch.Tensor
+    prompted_questions: List[str]
+    raw_responses: list[tuple[str, str]]
+    subjects: List[str]
+    def to(self, device):
+        def tree_map(dict_obj):
+            for key, val in dict_obj.items():
+                if isinstance(val, torch.Tensor):
+                    dict_obj[key] = val.to(device)
+                elif isinstance(val, Dict):
+                    tree_map(val)
+        tree_map(self.__dict__)
+        return self
+
+def get_dpo_collate_fn(tokenizer):
+    def dpo_collate_fn(examples):
+        subjects = []
+        inputs_to_combine = []
+        indices = []
+        prompted_questions = []
+        raw_responses = []
+        for example in examples:
+            indices.append(example[0])
+            subjects.append(example[1])
+            prompted_question = example[2]
+            raw_response_correct = example[3][2]
+            raw_response_incorrect = example[4][2]
+            prompted_questions.append(prompted_question)
+            raw_responses.append((raw_response_correct, raw_response_incorrect))
+            inputs_to_combine.extend([ # prompted_question
+                [tokenizer(prompted_question, add_special_tokens=False).input_ids, tokenizer(raw_response_correct, add_special_tokens=False).input_ids],
+                [tokenizer(prompted_question, add_special_tokens=False).input_ids, tokenizer(raw_response_incorrect, add_special_tokens=False).input_ids]
+            ])
+
+        inputs_to_pad = [sum(l, []) for l in inputs_to_combine]
+        inputs_padded = []
+        max_len_input = max(len(l) for l in inputs_to_pad) 
+        attention_mask = torch.ones((len(inputs_to_pad), max_len_input), dtype=torch.float32)
+        for i, input_to_pad in enumerate(inputs_to_pad):
+            inputs_padded.append([128004] * (max_len_input - len(input_to_pad)) + input_to_pad)
+            attention_mask[i, :-len(input_to_pad)] = 0
+        input_ids = torch.tensor(inputs_padded)
+        labels = torch.full_like(input_ids, fill_value=-100)
+        for i, input_to_combine in enumerate(inputs_to_combine):
+            labels[i,-len(input_to_combine[-1]):] = input_ids[i, -len(input_to_combine[-1]):] # take only the response portion of the answer from the labels
+
+        return DPOCollateReturn(
+            indices,
+            input_ids, 
+            attention_mask,
+            labels,
+            prompted_questions,
+            raw_responses,
+            subjects
+        )
+    return dpo_collate_fn
+
+
+# dpo_dataset = DPODataset(data, indices[0], prompted_questions[0], answers[0], raw_responses[0], scores[0])
+# dpo_dataloader = DataLoader(dpo_dataset, batch_size=8, collate_fn=dpo_collate_fn, num_workers=0, pin_memory=True, pin_memory_device="cuda")

@@ -1,5 +1,5 @@
 # Reasoning project for Deep Reinforcement Learning
-Team with Atharva, Lorand, and Milad
+Team with Atharva, Lorand, and Milad and Yixiong Hao, Ayush
 
 Project Goal: to investigate the potential improvement in down stream general reasoning ability given modifications to Quiet-STaR esk training. We are tackling some problem settings which we expect to be very easy to initially improve over the naive performance, one such setting is multilingual MMLU, for which the performance degrades substantially, when asking MMLU questions in a different langauge.
 
@@ -24,13 +24,23 @@ Ipa italẹ fun awọn ohun elo ti awọn asidi ọra polyunsaturated adayeba ni
 ![alt text](image-1.png)
 
 # some scripts with hydra for convience:
-python run.py trainer.single_batch=true trainer.gen_batch_size=32
+<!-- python run.py trainer.single_batch=true trainer.gen_batch_size=32 -->
 
 // for seeing if I can fit to a single batch of data.
-python run.py trainer.single_batch=true trainer.gen_batch_size=8 trainer.reinforce_batch_size=8 trainer.agent.model_handler.warmup=0
+python run.py trainer.single_batch=true trainer.gen_batch_size=8 trainer.train_batch_size=8 trainer.agent.model_handler.warmup=0
 
-python run.py -m trainer.gen_batch_size=24 trainer.reinforce_batch_size=16 logger=CustomWandBLogger trainer.dataset_name=mmlu_YO-NG run_type=train_translate
+python run.py -m trainer.gen_batch_size=24 trainer.train_batch_size=16 logger=CustomWandBLogger trainer.dataset_name=mmlu_YO-NG run_type=train_translate
 
+python run.py logger=CustomWandBLogger trainer.train_batch_size=32 trainer.gen_batch_s
+ize=64 run_type=train_english trainer.dataset_name=mmlu
+
+
+python run.py trainer.single_batch=true trainer.gen_batch_size=8 trainer.train_batch_size=8 trainer.agent.model_handler.warmup=0
+
+python run.py trainer.single_batch=true trainer.gen_batch_size=8 trainer.train_batch_size=8 trainer.agent.model_handler.warmup=0 trainer.train_strategy=dpo trainer.samples_per_train_question=5
+
+python run.py -m run_type=train_dpo_english trainer.gen_batch_size=64 trainer.train_batch_size=6 trainer.train_strategy=dpo trainer.samples_per_train_question=2 logger=CustomWandBLogger trainer.dataset_name=mmlu trainer.agent.model_handler.optimizer_partial.lr=0.0002 trainer.dpo_beta=0.1
+# tried learning rate 0.00002, now trying 0.0002, maybe also try different beta. maybe also try reinforce tuning before to make the ref model and starting model supervised on the winning responses.
 
 <!-- python run.py run_type=val trainer.gen_batch_size=48 "trainer.dataset_name=mmlu_YO-NG" "+current_global_step=2" "+model_checkpoint_to_eval=/nethome/jbjorner3/dev/hallucination-fun/star/star_runs/train_2024-10-01/03-06-34_0/checkpoint_2"
 

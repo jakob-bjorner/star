@@ -97,7 +97,9 @@ def my_app(cfg: RunConfig) -> None:
     #     cfg.logger.name += f"_ws=({cfg.trainer.model.supervised_weight:.3},{cfg.trainer.model.so_weight:.3},{cfg.trainer.model.mlm_weight:.3},{cfg.trainer.model.tlm_weight:.3},{cfg.trainer.model.psi_weight:.3})"
     # if "max_softmax" in cfg.trainer.model.coverage_encouragement_type:
     #     cfg.logger.name += f"_maxCvgTempStartEnd={(cfg.trainer.model.max_softmax_temperature_start, cfg.trainer.model.max_softmax_temperature_end)}_cvgW={cfg.trainer.model.coverage_weight}_cvgType={cfg.trainer.model.coverage_encouragement_type}"
-    cfg.logger.name += f"_ds={cfg.trainer.dataset_name}_lr={cfg.trainer.agent.model_handler.optimizer_partial.lr}_seed={cfg.seed}"
+    if 'dpo' in cfg.trainer.train_strategy:
+        cfg.logger.name += f"_beta={cfg.trainer.dpo_beta}_samples={cfg.trainer.samples_per_train_question}"
+    cfg.logger.name += f"_ts={cfg.trainer.train_strategy}_ds={cfg.trainer.dataset_name}_lr={cfg.trainer.agent.model_handler.optimizer_partial.lr}_wd={cfg.trainer.agent.model_handler.optimizer_partial.weight_decay}__seed={cfg.seed}"
     # _cosSim={cfg.trainer.model.cosine_sim}_simTemp={cfg.trainer.model.sim_func_temp}_thresh={cfg.trainer.model.threshold}_divByLen={cfg.trainer.model.div_by_len}_entropyLoss={cfg.trainer.model.entropy_loss}
     # import ipdb; ipdb.set_trace()
 

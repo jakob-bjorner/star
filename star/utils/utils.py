@@ -1,12 +1,5 @@
-
-# eval gen acc 13.0, train 15.6  for bellow prompt:
-# Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering.
-# TODO: change this back, or make it somehow a config option.......
-# eval gen acc 15.8, train 16.8  for bellow prompt:
-# Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step in English before answering.
-# eval gen acc 22.2, train 21.9
 QUERY_TEMPLATE_MULTICHOICE = """
-Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Translate the question and answers to English to begin with, and think step by step before answering.
+{Preamble_To_Question}
 
 {Question}
 
@@ -114,3 +107,19 @@ def normalize_extracted_answer(extracted_answer: str) -> str:
         .replace("Ｄ", " D")
         .strip()
     )
+from dataclasses import dataclass
+
+@dataclass
+class GeneratedSamples:
+    indices: list[int]
+    prompted_questions: list[str]
+    model_answers: list[str]
+    subjects: list[str]
+    correct_answers: list[str]
+    raw_responses: list[str]
+    scores: list[float]
+    def __add__(self, other):
+        return GeneratedSamples(**{k: v + other.__dict__[k] for k,v in self.__dict__.items()})
+    def get_subset_by_subject(self, subject: str):
+        subset_indices = [i for i, s in enumerate(self.subjects) if s == subject] 
+        return GeneratedSamples(**{k: [v[i] for i in subset_indices] for k, v in self.__dict__.items()})

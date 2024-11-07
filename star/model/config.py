@@ -24,6 +24,10 @@ class UnslothModelHandlerConfig: # (BaseModelHandlerConfig):
     warmup: int = 5
     scheduler_str: str = "lambda"
     optimizer_partial: Any = MISSING
+# TODO: look at adamw_8bit optimizer 
+# https://huggingface.co/blog/mlabonne/sft-llama3
+# https://huggingface.co/docs/bitsandbytes/main/en/optimizers
+# likely need to see how unsloth does this by default as parameters seem to need to be changed to stable versions...
 
 ConfigStore.instance().store(name="AdamW", node={"_target_":"torch.optim.adamw.AdamW", 
                                                                      "lr": 0.0002,
