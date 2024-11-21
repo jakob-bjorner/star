@@ -108,7 +108,7 @@ def normalize_extracted_answer(extracted_answer: str) -> str:
         .strip()
     )
 from dataclasses import dataclass
-
+from collections import defaultdict
 @dataclass
 class GeneratedSamples:
     indices: list[int]
@@ -123,3 +123,8 @@ class GeneratedSamples:
     def get_subset_by_subject(self, subject: str):
         subset_indices = [i for i, s in enumerate(self.subjects) if s == subject] 
         return GeneratedSamples(**{k: [v[i] for i in subset_indices] for k, v in self.__dict__.items()})
+    def get_accuracy_by_subject(self):
+        score_lists_per_subject = defaultdict(list)
+        for score, subject in zip(self.scores, self.subjects):
+            score_lists_per_subject[subject].append(score)
+        return {subject: sum(score_list) / len(score_list) for subject, score_list in score_lists_per_subject.items()}

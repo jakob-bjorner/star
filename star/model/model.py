@@ -12,7 +12,7 @@ class BaseModelHandler(ABC):
     def get_model_tokenizer(self, checkpoint=None) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizerFast]:
         ...
     @abstractmethod
-    def get_optimizer_scheduler_max_steps(self, model, steps_per_epoch) -> Tuple[Optimizer, LRScheduler, int]:
+    def get_optimizer_scheduler_max_steps(self, model, max_steps) -> Tuple[Optimizer, LRScheduler]:
         ...
     @abstractmethod
     def prepare_for_inference(self, model) -> transformers.PreTrainedModel:
@@ -30,19 +30,19 @@ class BaseModelHandler(ABC):
 class UnslothModelHandler(BaseModelHandler):
     def __init__(self, model_name, 
                  max_seq_length,
-                 epochs,
-                 max_steps,
+                #  epochs,
+                #  max_steps,
                  warmup,
                  scheduler_str: str,
-                 optimizer_partial: Any):
-        assert max_steps != -1 or epochs != -1, f"one of max_steps or epochs must be non negative, but both are -1"
-        self.epochs = epochs
-        self.max_steps = max_steps
+                 optimizer_partial: Any,
+                 lora_r: int):
+        
         self.warmup = warmup
         self.scheduler_str = scheduler_str
         self.optimizer_partial = optimizer_partial
         self.model_name = model_name
         self.max_seq_length = max_seq_length
+        self.lora_r = lora_r
         assert self.model_name == "unsloth/Meta-Llama-3.1-8B-Instruct", "unsloth/Meta-Llama-3.1-8B-Instruct is the only supported model until I get the peft working for others. I can special case it or I could do something with accepting lists in the configs"
     def get_model_tokenizer(self, checkpoint=None) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizerFast]:
         
@@ -51,10 +51,10 @@ class UnslothModelHandler(BaseModelHandler):
             checkpoint = self.model_name
             peft_function = lambda model: FastLanguageModel.get_peft_model(
                 model,
-                r = 16, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
+                r = self.lora_r, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
                 target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
                                 "gate_proj", "up_proj", "down_proj",],
-                lora_alpha = 16,
+                lora_alpha = self.lora_r,
                 lora_dropout = 0, # Supports any, but = 0 is optimized
                 bias = "none",    # Supports any, but = "none" is optimized
                 # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
@@ -71,12 +71,7 @@ class UnslothModelHandler(BaseModelHandler):
         model = peft_function(model)
         return model, tokenizer
     
-    def get_optimizer_scheduler_max_steps(self, model, steps_per_epoch) -> Tuple[Optimizer, LRScheduler, int]:
-        # TODO: modify the DPO masking implementation to exclude the <eos> token as recommended by DPO paper?
-        if self.max_steps == -1:
-            max_steps = self.epochs * steps_per_epoch
-        else:
-            max_steps = self.max_steps
+    def get_optimizer_scheduler_max_steps(self, model, max_steps) -> Tuple[Optimizer, LRScheduler]:
         warmup = self.warmup
         optimizer = self.optimizer_partial(model.parameters())
         if self.scheduler_str == "lambda":
@@ -85,10 +80,12 @@ class UnslothModelHandler(BaseModelHandler):
             elif warmup == 0:
                 scheduler = LambdaLR(optimizer, lambda step: 1 - (step / max_steps))
             else:
-                scheduler = LambdaLR(optimizer, lambda step: step/warmup if warmup >= step else 1 - (step-warmup) / (max_steps-warmup))
+                scheduler = LambdaLR(optimizer, lambda step: (step+1)/warmup if warmup >= (step+1) else 1 - (step+1-warmup) / (max_steps-warmup))
+        elif self.scheduler_str == "const":
+            scheduler = LambdaLR(optimizer, lambda step: 1)
         else:
             raise Exception(f"scheduler {self.scheduler_str} is not implemented yet in model.py")
-        return optimizer, scheduler, max_steps
+        return optimizer, scheduler
     def prepare_for_inference(self, model):
         return FastLanguageModel.for_inference(model)
     def prepare_for_training(self, model):

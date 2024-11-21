@@ -5,22 +5,55 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "debug dpo_test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/nethome/jbjorner3/dev/hallucination-fun/star/dpo_test_launcher.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "learning_rate=5e-6",
+                "ds=just_one",
+                "lr_scheduler_type=constant",
+                "warmup_ratio=0.0",
+                "optim=adamw_torch",
+                "batch_size=1",
+                "gradient_accumulation=1",
+                "num_train_epochs=3",
+            ]
+        },
+        {
             "name": "debug run.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/nethome/jbjorner3/dev/hallucination-fun/star/run.py",
             "console": "integratedTerminal",
             "args": [
-                "run_type=train_dpo_english", 
+                "run_type=train_dpo_english",
+                "logger=BasicPrintLoggerConfig",
+                // "logger=CustomWandBLogger",
                 "trainer.gen_batch_size=64", // 64 8
-                "trainer.train_batch_size=6",  // 16 for 2 samples 8 for 4 samples
+                // two below for testing the val nll
+                // "trainer.gen_batch_size=8",
+                // "trainer.single_batch=true",
+                "trainer.train_batch_size=1", // 16 for 2 samples 8 for 4 samples
                 "trainer.train_strategy=dpo",
                 "trainer.samples_per_train_question=2", // modified from 2
-                // "logger=CustomWandBLogger",
                 "trainer.num_workers=0",
                 "trainer.dataset_name=mmlu",
-                "trainer.agent.model_handler.optimizer_partial.lr=0.00002",
-                "trainer.single_batch=true",
+                "trainer.agent.model_handler.optimizer_partial.lr=5e-6",
+                "trainer.val_every_n_steps=1", // just to test the validation.
+                "trainer.skip_first_validation_loop=true",
+                "trainer.preload_data_for_training=/nethome/jbjorner3/dev/hallucination-fun/star/star_runs/train_dpo_english_2024-11-07/12-28-14_0/train_0/generated.csv", // 
+                // "trainer.preload_data_for_training=/nethome/jbjorner3/dev/hallucination-fun/star/scratch/test_one_generated.csv",
+                // "trainer.do_eval=false",
+                // "trainer.interal_epochs=3",
+                // "trainer.agent.model_handler.scheduler_str=const",
+                "trainer.agent.model_handler.optimizer_partial.weight_decay=0.0",
+                "trainer.agent.model_handler.lora_r=64",
+                // "trainer.preload_data_for_val=/nethome/jbjorner3/dev/hallucination-fun/star/star_runs/train_dpo_english_2024-11-13/23-30-22/val_0/generated.csv",
+                "trainer.preload_data_for_val=/nethome/jbjorner3/dev/hallucination-fun/star/scratch/val_3x_generated.csv",
+                "trainer.max_epochs=1", // this ensures termination after the first training epoch useful for testing.
             ]
         }
     ]

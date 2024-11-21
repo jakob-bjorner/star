@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from omegaconf import MISSING
 from hydra.core.config_store import ConfigStore
-from typing import Any, List
+from typing import Any, List, Optional
 from star.logger.config import BaseLoggerConfig
 from star.agent.config import AgentConfig
 @dataclass
@@ -18,6 +18,7 @@ class TrainerConfig:
     gen_batch_size: int = 128
     single_batch: bool = False
     train_batch_size: int = 16
+    train_gradient_accumulation_steps: int = 1
     num_workers: int = 3
     dataset_name: str = "mmlu_YO-NG" # mmlu
     system_message: str = "You are a helpful assistant"
@@ -32,7 +33,15 @@ class TrainerConfig:
     # other algorithms like many samplings idea for finding optimal probability sequence  would modify inference, with substantial communication between the loss function, and the generated samples?
     train_strategy: str = "reinforce" # either dpo or reinforce # I could change this to an object which contains the specs necessary for the strategy to be executed, but whatever for now.
     dpo_beta: float = 0.1
-
+    skip_first_validation_loop: bool = False
+    interal_epochs: int = 1
+    preload_data_for_training: Optional[str] = None
+    preload_data_for_val: Optional[str] = None
+    log_every_n_steps: int = 1
+    val_every_n_steps: int = 60
+    max_epochs: int = 10
+    max_grad_norm: float = 1.0
+    do_eval: bool = True
     _partial_: bool = True
     # seed: int = 0 # for numbers 0 or lower, the seed is random. This is for easy testing.
 ConfigStore.instance().store(name="TrainerConfig", node=TrainerConfig, group="trainer")

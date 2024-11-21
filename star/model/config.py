@@ -14,16 +14,17 @@ class UnslothModelHandlerConfig: # (BaseModelHandlerConfig):
         ])
     _target_: str = "star.model.model.UnslothModelHandler"
     model_name: str = MISSING
-    max_seq_length: int = 2048
+    max_seq_length: int = 4096
     # things related to unsloth should go here, but might be complicated like the peft that is being used
     # I might do Peft support later???
 
     # any things related to optimization aswell
-    epochs: int = 1
-    max_steps: int = -1
+    # epochs: int = 1
+    # max_steps: int = -1
     warmup: int = 5
-    scheduler_str: str = "lambda"
+    scheduler_str: str = "lambda" # can be const
     optimizer_partial: Any = MISSING
+    lora_r: int = 16
 # TODO: look at adamw_8bit optimizer 
 # https://huggingface.co/blog/mlabonne/sft-llama3
 # https://huggingface.co/docs/bitsandbytes/main/en/optimizers

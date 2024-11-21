@@ -224,13 +224,16 @@ def get_dpo_collate_fn(tokenizer):
         inputs_padded = []
         max_len_input = max(len(l) for l in inputs_to_pad) 
         attention_mask = torch.ones((len(inputs_to_pad), max_len_input), dtype=torch.float32)
+        right_pads = []
         for i, input_to_pad in enumerate(inputs_to_pad):
-            inputs_padded.append([128004] * (max_len_input - len(input_to_pad)) + input_to_pad)
-            attention_mask[i, :-len(input_to_pad)] = 0
+            right_pad = max_len_input - len(input_to_pad)
+            inputs_padded.append(input_to_pad + [128004] * right_pad)
+            right_pads.append(right_pad)
+            attention_mask[i, len(input_to_pad):] = 0
         input_ids = torch.tensor(inputs_padded)
         labels = torch.full_like(input_ids, fill_value=-100)
-        for i, input_to_combine in enumerate(inputs_to_combine):
-            labels[i,-len(input_to_combine[-1]):] = input_ids[i, -len(input_to_combine[-1]):] # take only the response portion of the answer from the labels
+        for i, (input_to_combine, right_pad) in enumerate(zip(inputs_to_combine, right_pads)):
+            labels[i,-len(input_to_combine[-1])-right_pad:max_len_input-right_pad] = input_ids[i, -len(input_to_combine[-1])-right_pad:max_len_input-right_pad] # take only the response portion of the answer from the labels
 
         return DPOCollateReturn(
             indices,
