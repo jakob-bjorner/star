@@ -10,11 +10,25 @@ from star.dataset.dataset import GenerationCollateReturn, DPOCollateReturn, Rein
 import pandas as pd
 from star.utils.utils import GeneratedSamples, normalize_response, MULTILINGUAL_ANSWER_REGEXES, MULTILINGUAL_ANSWER_PATTERN_TEMPLATE, normalize_extracted_answer
 import re
+from math import ceil
+
 @dataclass
 class DPOStepOutput:
     loss: torch.Tensor
     reward_winning: torch.Tensor
     reward_losing: torch.Tensor
+    ranking_acc: torch.Tensor
+
+@dataclass
+class ReinforceStepOutput:
+    loss: torch.Tensor
+
+# @dataclass
+class DebugJobObject:
+    def __init__(self, res):
+        self.res = res
+    def result(self):
+        return self.res
 
 class Agent:
     def __init__(self, model_handler: BaseModelHandler): 
@@ -25,16 +39,17 @@ class Agent:
         #   get the base model for training, to save, and for sampling from a saved checkpoint.
         self.model_handler = model_handler
         self.async_job_handlers = dict()
-    def get_new_model_tokenizer_optimizer_scheduler_max_steps(self, gradient_steps_for_scheduler):
-        model, tokenizer = self.model_handler.get_model_tokenizer(None)
+    def get_new_model_tokenizer_optimizer_scheduler_max_steps(self, gradient_steps_for_scheduler, model_name):
+        model, tokenizer = self.model_handler.get_model_tokenizer(model_name)
         self.model_handler.prepare_for_training(model)
         optimizer, scheduler = self.model_handler.get_optimizer_scheduler_max_steps(model, gradient_steps_for_scheduler)
         return model, tokenizer, optimizer, scheduler
-    def save_model(self, model, checkpoint):
-        self.model_handler.save(model, checkpoint)
+    def save_model(self, model, tokenizer, checkpoint):
+        self.model_handler.save(model, tokenizer, checkpoint)
     def reinforce_train_step(self, model, data):
         # with torch.autocast('cuda', dtype = torch.bfloat16):
-        return model(**data.__dict__)
+        loss = model(**data.__dict__).loss
+        return ReinforceStepOutput(loss=loss)
     def dpo_train_step(self, model, ref_model, data, beta):
         # TODO: modify the DPO masking implementation to exclude the <eos> token as recommended by DPO paper?
         def get_nlls_per_batch_element(model, input_ids, attention_mask, labels):
@@ -71,7 +86,8 @@ class Agent:
         with torch.no_grad():
             reward_winning = beta * log_ratios[0::2].mean()
             reward_losing = beta * log_ratios[1::2].mean()
-        return DPOStepOutput(loss=loss, reward_winning=reward_winning, reward_losing=reward_losing)
+            ranking_acc = (log_ratios[1::2] < log_ratios[0::2]).float().mean()
+        return DPOStepOutput(loss=loss, reward_winning=reward_winning, reward_losing=reward_losing, ranking_acc=ranking_acc)
     # def dpo_train_step_alternative(self, model, ref_model, data, beta):
     #     input_ids = data.input_ids
     #     attention_mask = data.attention_mask
@@ -143,52 +159,63 @@ def get_executor(output_dir: str, single_batch: bool):
     )
     return executor
 
-def generate_async_nll_jobs_distributed(output_dir: str, dataloader: DataLoader, agent: Agent, train_strategy:str, dpo_beta: float, checkpoint: Optional[str], single_batch: bool): # num_batches, config, device
+def generate_async_nll_jobs_distributed(output_dir: str, dataloader: DataLoader, agent: Agent, train_strategy:str, dpo_beta: float, checkpoint: Optional[str], single_batch: bool, ref_model_name: str, debug_eval: bool): # num_batches, config, device
     executor = get_executor(output_dir, single_batch)
-    def launch_job_passthrough_function(checkpoint, dataloader, seed, agent):
-        model, tokenizer = agent.model_handler.get_model_tokenizer(checkpoint)
-        model = agent.model_handler.prepare_for_training(model)
+    def launch_job_passthrough_function(checkpoint, data_list, seed, model_handler, loss_fn_step):
+        model, tokenizer = model_handler.get_model_tokenizer(checkpoint)
+        model = model_handler.prepare_for_training(model)
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
         losses_list = []
         len_list = []
         with torch.no_grad():
-            for data in tqdm.tqdm(dataloader):
+            for data in tqdm.tqdm(data_list):
                 data.to("cuda")
                 if "dpo" in train_strategy:
                     assert isinstance(data, DPOCollateReturn)
                     print(f"{data.input_ids.shape=}, {data.indices=}, {data.subjects=}")
                     if "ref_model" not in locals():
-                        ref_model, _ = agent.model_handler.get_model_tokenizer()
-                        ref_model = agent.model_handler.prepare_for_training(ref_model)
+                        ref_model, _ = model_handler.get_model_tokenizer(ref_model_name)
+                        ref_model = model_handler.prepare_for_training(ref_model)
                     else:
                         ref_model = locals()['ref_model']
-                    losses = agent.dpo_train_step(model, ref_model, data, dpo_beta)
+                    losses = loss_fn_step(model, ref_model, data, dpo_beta)
+                    len_list.append(data.input_ids.shape[0] // 2)    
                 elif "reinforce" in train_strategy:
                     assert isinstance(data, ReinforceCollateReturn)
                     print(f"{data.input_ids.shape=}")
 
-                    losses = agent.reinforce_train_step(model, data)
+                    losses = loss_fn_step(model, data)
+                    len_list.append(data.input_ids.shape[0])    
                 else:
                     raise Exception(f"invalid option for train_strategy in Trainer {train_strategy}")
                 losses_list.append(losses)
-                len_list.append(data.input_ids.shape[0])
         # seed = time.time_ns()
         return losses_list, len_list
 
     jobs = []
     print("launching nll jobs with these generation jobs, they should finish well before.")
+    num_splits = 2 if not single_batch else len(dataloader)
     with executor.batch():
-        job = executor.submit(launch_job_passthrough_function, checkpoint, dataloader, torch.randint(0,1000000,(1,)).item(), agent)
-        jobs.append(job)
-        # for data in dataloader:
+        all_data = []
+        for data in dataloader:
+            all_data.append(data)
         #     job = executor.submit(launch_job_passthrough_function, checkpoint, data, torch.randint(0,1000000,(1,)).item())
         #     jobs.append(job)
         #     if single_batch:
+        split_len = ceil(len(all_data)/num_splits)
+        for data_sub_list in [all_data[split_len * (i) : split_len * (i + 1)] for i in range(num_splits)]:
+            if debug_eval:
+                job = DebugJobObject(launch_job_passthrough_function(checkpoint, data_sub_list, torch.randint(0,1000000,(1,)).item(), agent.model_handler, agent.reinforce_train_step if "reinforce" in train_strategy else agent.dpo_train_step))
+            else:
+                job = executor.submit(launch_job_passthrough_function, checkpoint, data_sub_list, torch.randint(0,1000000,(1,)).item(), agent.model_handler, agent.reinforce_train_step if "reinforce" in train_strategy else agent.dpo_train_step)
+            jobs.append(job)
+            if single_batch:
+                break
         #         break
     return jobs
 
-def generate_async_sample_jobs_distributed(output_dir: str, dataloader: DataLoader, model_handler: BaseModelHandler, checkpoint: Optional[str], temperature: float, single_batch: bool): # num_batches, config, device
+def generate_async_sample_jobs_distributed(output_dir: str, dataloader: DataLoader, model_handler: BaseModelHandler, checkpoint: Optional[str], temperature: float, single_batch: bool, debug_eval: bool): # num_batches, config, device
     executor = get_executor(output_dir, single_batch)
     def launch_job_passthrough_function(checkpoint, data: GenerationCollateReturn, temperature, seed):
         model, tokenizer = model_handler.get_model_tokenizer(checkpoint)
@@ -211,7 +238,7 @@ def generate_async_sample_jobs_distributed(output_dir: str, dataloader: DataLoad
         for i, output in enumerate(tokenizer.batch_decode(outputs[:, data.input_ids.shape[1]:])):
             try:
                 if "<|eot_id|>" not in output:
-                    raw_answer = output[:output] # this will lead to some examples which go on for ever being reduced in likelihood if they are compared to one which terminates with the correct answer.
+                    raw_answer = output # this will lead to some examples which go on forever being reduced in likelihood if they are compared to one which terminates with the correct answer.
                     extracted_answer = None
                     score = 0.0
                 else:
@@ -230,7 +257,7 @@ def generate_async_sample_jobs_distributed(output_dir: str, dataloader: DataLoad
                 scores.append(score)
             except Exception as e:
                 import sys
-                txt = f"exception {e}... other details: {outputs.shape=},\n{data.answers[i]=},\n{data.input_strs[i]=},\n{output=}".encode("utf8") # type: ignore
+                txt = f"exception {e}... other details: {outputs.shape=},\n{data.answers[i]=},\n{data.input_strs[i]=},\n{output=}\n".encode("utf8") # type: ignore
                 sys.stdout.buffer.write(txt)
                 model_answers.append(None)
                 raw_responses.append(None)
@@ -241,7 +268,10 @@ def generate_async_sample_jobs_distributed(output_dir: str, dataloader: DataLoad
     print(f"expected time to collect is 6 minutes per batch for 128 batch size {dataloader.batch_size=}, datasetlen={len(dataloader.dataset)}, batches={len(dataloader)}") # type: ignore
     with executor.batch():
         for data in dataloader:
-            job = executor.submit(launch_job_passthrough_function, checkpoint, data, temperature, torch.randint(0,1000000,(1,)).item())
+            if debug_eval:
+                job = DebugJobObject(launch_job_passthrough_function(checkpoint, data, temperature, torch.randint(0,1000000,(1,)).item()))
+            else:
+                job = executor.submit(launch_job_passthrough_function, checkpoint, data, temperature, torch.randint(0,1000000,(1,)).item())
             jobs.append(job)
             if single_batch:
                 break

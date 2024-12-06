@@ -22,7 +22,8 @@ class TrainerConfig:
     num_workers: int = 3
     dataset_name: str = "mmlu_YO-NG" # mmlu
     system_message: str = "You are a helpful assistant"
-    preamble_to_question: str = "Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering."
+    preamble_to_question: str = "Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD."
+    meta_prompt_to_preamble: str = "Think step by step before answering."
     samples_per_train_question: int = 1 # must be at least 2 for dpo 
     # I can decide to create two training bodies or I can decide to keep only one trainer body? benefit if I keep just one is that I only have to make the changes one place, and don't have to port them around, but can make errors...
     # I think I'll keep just one for now, because I just need to integrate two implementations, and doesn't seem so hard. DPO and SFT Reinforcement. In the future, I will want to try different inference techniques (like Beamsearch maybe MCTS?), and possibly also meta prompts.
@@ -37,11 +38,18 @@ class TrainerConfig:
     interal_epochs: int = 1
     preload_data_for_training: Optional[str] = None
     preload_data_for_val: Optional[str] = None
-    log_every_n_steps: int = 1
+    # log_every_n_steps: int = 1
     val_every_n_steps: int = 60
     max_epochs: int = 10
     max_grad_norm: float = 1.0
     do_eval: bool = True
+    do_acc_eval: bool = True
+    model_name: str = "unsloth/Meta-Llama-3.1-8B-Instruct" # "unsloth/Llama-3.2-1B" # 
+    ref_model_name: str = "unsloth/Meta-Llama-3.1-8B-Instruct" # "unsloth/Llama-3.2-1B" # 
+    shuffle_dataloader: bool = False
+    debug_eval: bool = False
+    num_train_questions: int = -1
+    reset_model_every_star_epoch: bool = True
     _partial_: bool = True
     # seed: int = 0 # for numbers 0 or lower, the seed is random. This is for easy testing.
 ConfigStore.instance().store(name="TrainerConfig", node=TrainerConfig, group="trainer")

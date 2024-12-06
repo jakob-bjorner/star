@@ -6,10 +6,11 @@ import transformers
 from unsloth import FastLanguageModel
 from typing import Tuple, Any
 from abc import ABC, abstractmethod
+import os
 
 class BaseModelHandler(ABC):
     @abstractmethod
-    def get_model_tokenizer(self, checkpoint=None) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizerFast]:
+    def get_model_tokenizer(self, checkpoint: str) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizerFast]:
         ...
     @abstractmethod
     def get_optimizer_scheduler_max_steps(self, model, max_steps) -> Tuple[Optimizer, LRScheduler]:
@@ -21,15 +22,16 @@ class BaseModelHandler(ABC):
     def prepare_for_training(self, model) -> transformers.PreTrainedModel:
         ...
     @abstractmethod
-    def get_tokenizer(self, checkpoint) -> transformers.PreTrainedTokenizerFast:
+    def get_tokenizer(self, checkpoint:str) -> transformers.PreTrainedTokenizerFast:
         ...
     @abstractmethod
-    def save(self, model, checkpoint):
+    def save(self, model: transformers.PreTrainedModel, tokenizer: transformers.PreTrainedTokenizerFast,  checkpoint):
         ...
 
 class UnslothModelHandler(BaseModelHandler):
-    def __init__(self, model_name, 
+    def __init__(self,
                  max_seq_length,
+                 checkpoint_base,
                 #  epochs,
                 #  max_steps,
                  warmup,
@@ -40,15 +42,13 @@ class UnslothModelHandler(BaseModelHandler):
         self.warmup = warmup
         self.scheduler_str = scheduler_str
         self.optimizer_partial = optimizer_partial
-        self.model_name = model_name
         self.max_seq_length = max_seq_length
         self.lora_r = lora_r
-        assert self.model_name == "unsloth/Meta-Llama-3.1-8B-Instruct", "unsloth/Meta-Llama-3.1-8B-Instruct is the only supported model until I get the peft working for others. I can special case it or I could do something with accepting lists in the configs"
-    def get_model_tokenizer(self, checkpoint=None) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizerFast]:
-        
+        self.checkpoint_base = checkpoint_base
+        # assert self.model_name == "unsloth/Meta-Llama-3.1-8B-Instruct", "unsloth/Meta-Llama-3.1-8B-Instruct is the only supported model until I get the peft working for others. I can special case it or I could do something with accepting lists in the configs"
+    def get_model_tokenizer(self, checkpoint: str) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizerFast]:
         peft_function = lambda x: x
-        if checkpoint is None:
-            checkpoint = self.model_name
+        if not os.path.exists(checkpoint) and checkpoint == "unsloth/Meta-Llama-3.1-8B-Instruct":
             peft_function = lambda model: FastLanguageModel.get_peft_model(
                 model,
                 r = self.lora_r, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
@@ -63,12 +63,13 @@ class UnslothModelHandler(BaseModelHandler):
                 use_rslora = False,  # We support rank stabilized LoRA
                 loftq_config = None, # And LoftQ
             )
-        model, tokenizer = FastLanguageModel.from_pretrained(
+        model, _ = FastLanguageModel.from_pretrained(
             model_name=checkpoint,
             max_seq_length=self.max_seq_length,
             dtype=torch.bfloat16,
         )
         model = peft_function(model)
+        tokenizer = self.get_tokenizer("")
         return model, tokenizer
     
     def get_optimizer_scheduler_max_steps(self, model, max_steps) -> Tuple[Optimizer, LRScheduler]:
@@ -90,11 +91,16 @@ class UnslothModelHandler(BaseModelHandler):
         return FastLanguageModel.for_inference(model)
     def prepare_for_training(self, model):
         return FastLanguageModel.for_training(model)
-    def get_tokenizer(self, checkpoint) -> transformers.PreTrainedTokenizerFast:
-        if checkpoint is None:
-            checkpoint = self.model_name
+    def get_tokenizer(self, checkpoint: str) -> transformers.PreTrainedTokenizerFast:
+        checkpoint = self.checkpoint_base
         tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
         assert isinstance(tokenizer, transformers.PreTrainedTokenizerFast)
         return tokenizer
-    def save(self, model: transformers.PreTrainedModel, checkpoint):
-        model.save_pretrained(checkpoint)
+    def save(self, model: transformers.PreTrainedModel, tokenizer: transformers.PreTrainedTokenizerFast, checkpoint):
+        if self.checkpoint_base == "unsloth/Meta-Llama-3.1-8B-Instruct": # check if peft:
+            model.save_pretrained(checkpoint)
+            tokenizer.save_pretrained(checkpoint)
+        else:
+            model.save_pretrained(checkpoint, safe_serialization=False)
+            tokenizer.save_pretrained(checkpoint)
+        

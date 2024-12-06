@@ -13,8 +13,10 @@ class UnslothModelHandlerConfig: # (BaseModelHandlerConfig):
         "_self_",
         ])
     _target_: str = "star.model.model.UnslothModelHandler"
-    model_name: str = MISSING
+    # model_name: str = MISSING
     max_seq_length: int = 4096
+    # checkpoint base is for the tokenizer to be consistent.
+    checkpoint_base: str = "unsloth/Meta-Llama-3.1-8B-Instruct" # "unsloth/Llama-3.2-1B-Instruct" # 
     # things related to unsloth should go here, but might be complicated like the peft that is being used
     # I might do Peft support later???
 
@@ -33,10 +35,11 @@ class UnslothModelHandlerConfig: # (BaseModelHandlerConfig):
 ConfigStore.instance().store(name="AdamW", node={"_target_":"torch.optim.adamw.AdamW", 
                                                                      "lr": 0.0002,
                                                                      "weight_decay": 0.01,
+                                                                     "betas": (0.9, 0.95),
                                                                      "_partial_": True}, group="optimizer_partial")
 
 ConfigStore.instance().store(name="UnslothModelHandlerConfig", node=UnslothModelHandlerConfig(defaults=[{"/optimizer_partial": "AdamW"},
                                                                                                         "_self_",
                                                                                                         ],
-                                                                                              model_name = "unsloth/Meta-Llama-3.1-8B-Instruct",
+                                                                                            #   model_name = "unsloth/Meta-Llama-3.1-8B-Instruct",
                                                                                              ), group="model_handler")

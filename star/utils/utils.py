@@ -109,6 +109,7 @@ def normalize_extracted_answer(extracted_answer: str) -> str:
     )
 from dataclasses import dataclass
 from collections import defaultdict
+from typing import Iterable
 @dataclass
 class GeneratedSamples:
     indices: list[int]
@@ -128,3 +129,11 @@ class GeneratedSamples:
         for score, subject in zip(self.scores, self.subjects):
             score_lists_per_subject[subject].append(score)
         return {subject: sum(score_list) / len(score_list) for subject, score_list in score_lists_per_subject.items()}
+    def get_subset_by_indices(self, indices: Iterable[int]):
+        # subset_indices = [i for i, s in enumerate(self.subjects) if s == subject] 
+        return_samples = GeneratedSamples(**{k: [] for k in GeneratedSamples.__annotations__.keys()})
+        indices_set = set(indices)
+        for j, index in enumerate(self.indices):
+            if index in indices_set:
+                return_samples = return_samples + GeneratedSamples(**{k: [v[j]] for k, v in self.__dict__.items()})
+        return return_samples
